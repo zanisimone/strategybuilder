@@ -1,0 +1,19 @@
+# 🔍 Report Ottimizzazione — Parametro: pattern_long
+
+**Totale configurazioni testate**: 3
+**Miglior valore**: P13
+
+## 📈 Metriche Migliore Configurazione:
+- Net Profit        : 6881.50
+- Average Trade     : 4.09
+- Win Rate          : 54.10%
+- Max Drawdown      : 1490.25
+- Max Drawdown %    : 21.66%
+- Profit Factor     : 4.617681597047476
+- Expectancy        : 4.09
+- Win/Loss Ratio    : 1.18
+
+## 🧾 Tutti i risultati (primi 10):
+- pattern_long = P13 → NetProfit = 6881.50, Trades = 1682
+- pattern_long = P14 → NetProfit = 5866.75, Trades = 1261
+- pattern_long = P12 → NetProfit = 725.75, Trades = 368
