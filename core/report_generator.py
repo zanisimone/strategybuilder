@@ -2,67 +2,104 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-def generate_report(trades_df: pd.DataFrame):
+
+def generate_report(trades_df: pd.DataFrame, initial_equity: float):
     if trades_df.empty:
         print("⚠️ Nessun trade da analizzare.")
         return
 
-    print("\n📊 Report Avanzato Strategia\n")
+    df = trades_df.copy()
 
-    trades_df = trades_df.copy()
-    trades_df["cum_pnl"] = trades_df["pnl"].cumsum()
+    # Equity curve: se hai equity_after la uso, altrimenti ricostruisco
+    if "equity_after" in df.columns:
+        equity_curve = df["equity_after"].astype(float)
+    else:
+        df["cum_pnl"] = df["pnl"].cumsum()
+        equity_curve = initial_capital + df["cum_pnl"]
 
-    # === 1. Equity Line ===
+    # --- Plot Equity Line ---
     plt.figure(figsize=(10, 5))
-    plt.plot(trades_df["exit_time"], trades_df["cum_pnl"], label="Equity Line", linewidth=2)
-    plt.title("Equity Line")
+    plt.plot(df["exit_time"], equity_curve, label="Equity Line", linewidth=2)
+    plt.title("Equity Line (All-In, TP/SL in $)")
     plt.xlabel("Data")
-    plt.ylabel("Profitto cumulato")
+    plt.ylabel("Equity")
     plt.grid(True)
     plt.tight_layout()
     plt.legend()
     plt.show()
 
-    # === 2. Metriche base ===
-    total_trades = len(trades_df)
-    total_profit = trades_df["pnl"].sum()
-    avg_trade = trades_df["pnl"].mean()
-    wins = trades_df[trades_df["pnl"] > 0]
-    losses = trades_df[trades_df["pnl"] < 0]
-    win_rate = len(wins) / total_trades * 100 if total_trades else 0
-    avg_win = wins["pnl"].mean() if not wins.empty else 0
-    avg_loss = losses["pnl"].mean() if not losses.empty else 0
-    profit_factor = wins["pnl"].sum() / abs(losses["pnl"].sum()) if not losses.empty else np.inf
-    expectancy = (win_rate / 100 * avg_win) + ((100 - win_rate) / 100 * avg_loss)
+    # --- Metriche principali (in $) ---
+    total_trades = len(df)
+    final_equity = float(equity_curve.iloc[-1])
+    total_profit = final_equity - initial_equity
+    avg_trade = df["pnl"].mean()
 
-    # === 3. Metriche avanzate ===
-    pnl_series = trades_df["cum_pnl"]
-    max_dd = (pnl_series.cummax() - pnl_series).max()
-    max_dd_pct = max_dd / pnl_series.cummax().max() * 100 if pnl_series.cummax().max() != 0 else 0
+    wins = df[df["pnl"] > 0]
+    losses = df[df["pnl"] < 0]
+    win_rate = (len(wins) / total_trades * 100) if total_trades else 0.0
+    avg_win = wins["pnl"].mean() if not wins.empty else 0.0
+    avg_loss = losses["pnl"].mean() if not losses.empty else 0.0
+    denom = -losses["pnl"].sum()
+    profit_factor = (wins["pnl"].sum() / denom) if denom > 0 else np.inf
+    expectancy = (win_rate / 100.0) * avg_win + (1 - win_rate / 100.0) * avg_loss
 
-    duration_days = (trades_df["exit_time"].iloc[-1] - trades_df["entry_time"].iloc[0]).days
-    years = duration_days / 365.0 if duration_days > 0 else 1
-    cagr = (1 + total_profit) ** (1 / years) - 1 if years > 0 else 0
+    # --- Max Drawdown su equity ---
+    ec = equity_curve.values
+    roll_max = np.maximum.accumulate(ec)
+    drawdowns = roll_max - ec
+    max_dd = float(np.max(drawdowns)) if drawdowns.size else 0.0
+    peak_equity = float(np.max(roll_max)) if roll_max.size else 1.0
+    max_dd_pct = (max_dd / peak_equity * 100.0) if peak_equity > 0 else 0.0
 
-    returns = trades_df["pnl"]
-    sharpe = returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0
-    downside_returns = returns[returns < 0]
-    sortino = returns.mean() / downside_returns.std() * np.sqrt(252) if downside_returns.std() > 0 else 0
+    # --- Timing & CAGR (da equity) ---
+    duration_days = (pd.to_datetime(df["exit_time"].iloc[-1]) - pd.to_datetime(df["entry_time"].iloc[0])).days
+    years = max(duration_days / 365.0, 1e-9)  # evita divisioni per zero
+    cagr = (final_equity / initial_equity) ** (1 / years) - 1 if initial_equity > 0 else 0.0
 
-    win_loss_ratio = avg_win / abs(avg_loss) if avg_loss != 0 else np.inf
+    # --- Ritorni per-trade (percentuali) per Sharpe/Sortino per-trade annualizzati ---
+    # equity_before_i = equity_after_{i-1}, con il primo calcolato da initial_equity
+    if "equity_after" in df.columns:
+        equity_before = df["equity_after"].shift(1)
+        equity_before.iloc[0] = initial_equity
+        ret_trade = df["pnl"] / equity_before
+    else:
+        # Fallback: usa pnl / equity precedente ricostruita dalla curva
+        equity_before = pd.Series(equity_curve).shift(1)
+        equity_before.iloc[0] = initial_equity
+        ret_trade = df["pnl"] / equity_before.values
 
-    # === 4. Output console ===
-    print(f"Totale trade           : {total_trades}")
-    print(f"Profitto netto         : {total_profit:.2f}")
-    print(f"Average trade          : {avg_trade:.2f}")
-    print(f"Win rate               : {win_rate:.2f}%")
-    print(f"Win/Loss ratio         : {win_loss_ratio:.2f}")
-    print(f"Media vincite          : {avg_win:.2f}")
-    print(f"Media perdite          : {avg_loss:.2f}")
-    print(f"Expectancy per trade   : {expectancy:.2f}")
-    print(f"Max Drawdown           : {max_dd:.2f}")
-    print(f"Max Drawdown %         : {max_dd_pct:.2f}%")
-    print(f"Profit Factor          : {profit_factor:.2f}")
-    print(f"CAGR                   : {cagr*100:.2f}%")
-    print(f"Sharpe Ratio (Rf=0)    : {sharpe:.2f}")
-    print(f"Sortino Ratio (Rf=0)   : {sortino:.2f}")
+    ret_trade = ret_trade.replace([np.inf, -np.inf], np.nan).dropna()
+
+    # Annualizzazione per-trade: stima trades_per_year
+    trades_per_year = total_trades / years if years > 0 else 0.0
+    if len(ret_trade) > 1 and ret_trade.std() > 0 and trades_per_year > 0:
+        sharpe = ret_trade.mean() / ret_trade.std() * np.sqrt(trades_per_year)
+        downside = ret_trade[ret_trade < 0]
+        sortino = ret_trade.mean() / downside.std() * np.sqrt(trades_per_year) if downside.std() > 0 else np.nan
+    else:
+        sharpe, sortino = np.nan, np.nan
+
+    # --- Win/Loss ratio e expectancy in % ---
+    win_loss_ratio = (avg_win / abs(avg_loss)) if avg_loss != 0 else np.inf
+    expectancy_pct = ret_trade.mean() * 100 if len(ret_trade) else np.nan
+
+    # --- Output ---
+    print("📊 Report Avanzato Strategia (All-In)")
+    print(f"Totale trade            : {total_trades}")
+    print(f"Initial Equity          : {initial_equity:,.2f}")
+    print(f"Final Equity            : {final_equity:,.2f}")
+    print(f"Profitto netto          : {total_profit:,.2f}")
+    print(f"Average trade ($)       : {avg_trade:,.2f}")
+    print(f"Win rate                : {win_rate:.2f}%")
+    print(f"Win/Loss ratio          : {win_loss_ratio:.2f}")
+    print(f"Media vincite ($)       : {avg_win:,.2f}")
+    print(f"Media perdite ($)       : {avg_loss:,.2f}")
+    print(f"Expectancy per trade $  : {expectancy:,.2f}")
+    print(f"Expectancy per trade %  : {expectancy_pct:.2f}%")
+    print(f"Max Drawdown ($)        : {max_dd:,.2f}")
+    print(f"Max Drawdown (%)        : {max_dd_pct:.2f}%")
+    print(f"Profit Factor           : {profit_factor:.2f}")
+    print(f"CAGR                    : {cagr*100:.2f}%")
+    print(f"Sharpe (per-trade ann.) : {sharpe:.2f}")
+    print(f"Sortino (per-trade ann.): {sortino:.2f}")
+

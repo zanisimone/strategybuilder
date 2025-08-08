@@ -1,43 +1,51 @@
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, asdict
+from typing import Optional
 
 @dataclass
 class StrategyConfig:
-    asset: str
+    # === Parametri di base ===
+    initial_capital: float
+    session_start: int  # es. 930 per 09:30
+    session_end: int    # es. 1600 per 16:00
 
-    # Pattern Long
-    pattern_long: str
-    pattern_exclusion_long: str
-    pattern_vol_long: str
+    # === Pattern e filtri ===
+    enable_long: bool
+    enable_short: bool
+    pattern_long: Optional[str] = None
+    pattern_exclusion_long: Optional[str] = None
+    pattern_vol_long: Optional[str] = None
+    pattern_short: Optional[str] = None
+    pattern_exclusion_short: Optional[str] = None
+    pattern_vol_short: Optional[str] = None
 
-    # Pattern Short
-    pattern_short: str
-    pattern_exclusion_short: str
-    pattern_vol_short: str
+    # === Uscite temporali ===
+    bars_exit_long: int = 999999
+    bars_exit_short: int = 999999
+    exit_eod: bool = False
+    exit_eow: bool = False
 
-    # Orari di operatività (formato HHMM, es. 930 = 09:30)
-    session_start: int
-    session_end: int
-
-    # Flag uscita fine giornata e settimana
-    exit_eod: bool
-    exit_eow: bool
-
-    # Parametri long — moltiplicatori del rischio per trade (es: 2.0 = 2x rischio)
-    stop_loss_long: float  # esempio: 1.0 = 1x rischio
-    take_profit_long: float
-    bars_exit_long: int
-
-    # Parametri short — moltiplicatori del rischio per trade
-    stop_loss_short: float
-    take_profit_short: float
-    bars_exit_short: int
-
-    initial_capital: float = 100000.0         # Capitale iniziale
-    risk_per_trade_pct: float = 0.01          # % rischio per trade (es. 0.01 = 1%)
+    # === Risk model ALL-IN con SL/TP in $ ===
+    sl_dollars_long: float = 0.0
+    tp_dollars_long: float = 0.0
+    sl_dollars_short: float = 0.0
+    tp_dollars_short: float = 0.0
 
     # Facoltativo: nome strategia
     name: str = "Strategy"
 
+    def __post_init__(self):
+        if self.initial_capital <= 0:
+            raise ValueError("initial_capital must be > 0")
+        if not (0 <= self.session_start <= 2359 and 0 <= self.session_end <= 2359):
+            raise ValueError("session_* must be HHMM in [0000, 2359]")
+        if self.session_start > self.session_end:
+            raise ValueError("session_start must be <= session_end")
+        for v in (self.sl_dollars_long, self.tp_dollars_long,
+                  self.sl_dollars_short, self.tp_dollars_short):
+            if v < 0:
+                raise ValueError("SL/TP dollars must be >= 0")
+        if self.bars_exit_long < 1 or self.bars_exit_short < 1:
+            raise ValueError("bars_exit_* must be >= 1")
+
     def to_dict(self) -> dict:
-        return self.__dict__
+        return asdict(self)

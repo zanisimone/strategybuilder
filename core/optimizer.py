@@ -7,8 +7,6 @@ from joblib import Parallel, delayed
 import copy
 
 
-# === MAPPATURE PER PATTERN ENUMERATI ===
-
 PATTERN_ENUM_MAPS = {
     "pattern_long": {
     0: "P1", 1: "P2", 2: "P3", 3: "P4", 4: "P5", 5: "P6", 6: "P7", 7: "P8", 8: "P9", 9: "P10",
@@ -84,6 +82,23 @@ PATTERN_ENUM_MAPS = {
 
 }
 
+def generate_is_oos_splits(df: pd.DataFrame, n_splits: int = 2) -> list[tuple[np.ndarray, np.ndarray]]:
+    total_len = len(df)
+    split_size = total_len // (n_splits + 1)
+    splits = []
+
+    for i in range(n_splits):
+        oos_start = i * split_size
+        oos_end = (i + 1) * split_size
+        mask = np.ones(total_len, dtype=bool)
+        mask[oos_start:oos_end] = False
+        idx_is = np.where(mask)[0]
+        idx_oos = np.where(~mask)[0]
+        splits.append((idx_is, idx_oos))
+
+    return splits
+
+
 
 def optimize_parameter(
     config: StrategyConfig,
@@ -94,7 +109,10 @@ def optimize_parameter(
     step: float = None,
     daily_df: pd.DataFrame = None,
     intraday_df: pd.DataFrame = None,
-    pattern_mapping: dict[int, str] = None
+    pattern_mapping: dict[int, str] = None,
+    use_oos_split: bool = False,
+    oos_pct: float = 0.2,
+    n_splits: int = 2
 ) -> pd.DataFrame:
     if values is None:
         if any(v is None for v in [start, end, step]):
@@ -117,8 +135,34 @@ def optimize_parameter(
         config_copy = copy.deepcopy(config)
         setattr(config_copy, param_name, val)
 
-        engine = TradeEngine(config_copy, daily_df, intraday_df)
-        trades = engine.run()
+        if use_oos_split:
+            # --- Step 1: Calcolo dimensione e blocchi
+            total_len = len(intraday_df)
+            total_oos_len = int(total_len * oos_pct)
+            split_size = total_oos_len // n_splits
+
+            trades_all = []
+
+            for split_num in range(n_splits):
+                start = split_num * split_size
+                end = (split_num + 1) * split_size if split_num < n_splits - 1 else total_len
+                oos_mask = np.ones(total_len, dtype=bool)
+                oos_mask[start:end] = False
+                idx_is = np.where(oos_mask)[0]
+                idx_oos = np.where(~oos_mask)[0]
+
+                df_daily_is = daily_df.copy()
+                df_intra_is = intraday_df.iloc[idx_is].copy()
+
+                engine = TradeEngine(config_copy, df_daily_is, df_intra_is)
+                trades = engine.run()
+                trades["split"] = f"OOS_{split_num + 1}"
+                trades_all.append(trades)
+
+            trades = pd.concat(trades_all, ignore_index=True) if trades_all else pd.DataFrame()
+        else:
+            engine = TradeEngine(config_copy, daily_df, intraday_df)
+            trades = engine.run()
 
         if not trades.empty and "pnl" in trades.columns:
             net_profit = trades["pnl"].sum()
@@ -181,7 +225,6 @@ def generate_text_report(df: pd.DataFrame, param_name: str, output_path: str = "
     for i, row in df.sort_values("NetProfit", ascending=False).head(10).iterrows():
         report_lines.append(f"- {param_name} = {row[param_name]} → NetProfit = {row['NetProfit']:.2f}, Trades = {int(row['Trades'])}")
 
-    # Salvataggio
     file_path = os.path.join(output_path, f"report_optimization_{param_name}.txt")
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("\n".join(report_lines))
